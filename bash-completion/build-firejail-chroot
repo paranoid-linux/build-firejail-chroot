@@ -1,0 +1,60 @@
+# build-firejail-chroot completion
+
+_build_firejail_chroot() {
+    local cur prev words cword split
+    _init_completion || return
+
+    # default completion if parameter looks like a path
+    if [[ "${cur}" == @(*/|[.~])* ]]; then
+        _filedir
+        return
+    fi
+
+    case "${prev}" in
+        -h|--help|-v|--verbose)
+            return
+        ;;
+        --templates-directory|--url|--dist-url|--distribution-url|--base-chroot-directory|--base-download-directory|--profiles-directory|--firejail-profiles-directory)
+            _filedir
+            return
+        ;;
+        --template|--template-name)
+            COMPREPLY=( $( compgen -W 'default' -- ${cur} ) )
+            return
+        ;;
+        --profile|--profile-name)
+            COMPREPLY=( $( compgen -W 'default' -- ${cur} ) )
+            return
+        ;;
+        --mount|--mount-name)
+            COMPREPLY=( $( compgen -W 'default' -- ${cur} ) )
+            return
+        ;;
+        --dist|--dist-name|--distribution-name)
+            COMPREPLY=( $( compgen -W 'debian' -- ${cur} ) )
+            return
+        ;;
+        --arch|--arch-name)
+            COMPREPLY=( $( compgen -W 'amd64' -- ${cur} ) )
+            return
+        ;;
+        --branch|--branch-name)
+            COMPREPLY=( $( compgen -W 'stable' -- ${cur} ) )
+            return
+        ;;
+        --jail|--jail-name)
+            COMPREPLY=( $( compgen -W 'jailed-service' -- ${cur} ) )
+            return
+        ;;
+    esac
+
+    # Parse help for any un-matched parameters
+    if [[ ${cur} == -* ]]; then
+        COMPREPLY=( $( compgen -W '$( _parse_help "${1}" )' -- "${cur}" ) )
+        [[ ${COMPREPLY} == *= ]] && compopt -o nospace
+        return
+    fi
+} &&
+complete -F _build_firejail_chroot build-firejail-chroot
+
+# ex: filetype=bash

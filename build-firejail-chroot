@@ -1,0 +1,310 @@
+#!/usr/bin/env bash
+
+
+## Find true directory this script resides in
+__SOURCE__="${BASH_SOURCE[0]}"
+while [[ -h "${__SOURCE__}" ]]; do
+    __SOURCE__="$(find "${__SOURCE__}" -type l -ls | sed -n 's@^.* -> \(.*\)@\1@p')"
+done
+__DIR__="$(cd -P "$(dirname "${__SOURCE__}")" && pwd)"
+__NAME__="${__SOURCE__##*/}"
+__AUTHOR__='S0AndS0'
+__DESCRIPTION__='Initializes new chroot file systems compatible with Firejail sandboxing utility'
+
+
+## Source dependencies
+# shellcheck source=modules/argument-parser/argument-parser.sh
+source "${__DIR__}/modules/argument-parser/argument-parser.sh"
+
+set -Ee -o functrace
+# shellcheck source=modules/trap-failure/failure.sh
+source "${__DIR__}/modules/trap-failure/failure.sh"
+trap 'failure "LINENO" "BASH_LINENO" "${BASH_COMMAND}" "${?}"' ERR
+
+
+__license__(){
+    local _year
+    _year="$(date +'%Y')"
+    cat <<EOF
+Copyright (C) ${_year:-2020} ${__AUTHOR__:-"S0AndS0"}
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, version 3 of the License.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+EOF
+}
+
+
+__usage__() {
+    local _message="${1}"
+    local _templates_directory="__Install_Directory__/templates"
+    local _firejail_profiles_directory="\${HOME}/.config/firejail"
+
+    cat <<EOF
+${__DESCRIPTION__}
+
+
+Usage: ${__NAME__} [OPTION]...
+
+
+Options:
+-h            --help
+    {bool} Prints this message and exits
+
+-v            --verbose
+    {bool} Prints script license and exits
+
+--templates-directory="${_templates_directory}"
+    {path} Directory for template profile and mount script sub-directories
+
+--template    --template-name="${_template_name}"
+    {print} Template file name shared for profile and mount script
+
+--profile     --profile-name="${_profile_name}"
+    {print} Spicific (unique) Firejail template file name
+
+--mount       --mount-name="${_mount_name}"
+    {print} Spicific (unique) mount script template name
+
+--dist        --dist-name     --distribution-name="${_distrobution_name}"
+    {print} Distrobution name to download and build chroot file system from
+
+--url         --dist-url      --distribution-url="${_distrobution_url}"
+    {print} FTP URL to download chroot file system from
+
+--base-chroot-directory="${_base_chroot_directory}"
+    {path} Directory that live chroot file systems are copied to
+
+--base-download-directory="${_base_download_directory}"
+    {path} Directory that chroot file systems are downloaded to
+
+--profiles-directory          --firejail-profiles-directory="${_firejail_profiles_directory}"
+    {path} Directory that Firejail profiles are copied to
+
+--arch        --arch-name="${_arch_name}"
+    {print} Architecture for chroot environment, eg. $(dpkg --print-architecture)
+
+--branch      --branch-name="${_branch_name}"
+    {print} Distrobution branch, eg. 'stable'
+
+--jail        --jail-name="${_jail_name}"
+    {print-nil} Name for Firejail chroot environment, eg. 'service-name'
+
+
+Examples:
+# Option 1, accept defaults and setup chroot named 'jailed_service'
+  ${__NAME__} jailed_service
+
+
+# Option 2, Define parameters manually
+  ${__NAME__} --templates-directory "${_templates_directory}"\\
+          --profile-name "${_profile_name}"\\
+          --mount-name "${_mount_name}"\\
+          --distribution-name "${_distrobution_name}"\\
+          --distribution-url "${_distrobution_url}"\\
+          --base-chroot-directory "${_base_chroot_directory}"\\
+          --base-download-directory "${_base_download_directory}"\\
+          --firejail-profiles-directory "${_firejail_profiles_directory}"\\
+          --arch-name "${_arch_name}"\\
+          --branch-name "${_branch_name}"\\
+          "${_jail_name:-jailed_service}"
+EOF
+
+    if (( ${#_message} )); then
+        printf >&2 '\n## Error: %s\n' "${_message}"
+        exit 1
+    fi
+}
+
+
+__version__() {
+    local _version_number
+    _version_number="$(git tag --list v* | tail -n1)"
+    _version_number="${_version_number:-v0.0.1}"
+    _version_number="${_version_number//[^0-9.]/}"
+
+    cat <<EOF
+${__NAME__} - ${_version_number}
+
+$( __license__ )
+
+Written by ${__AUTHOR__}
+EOF
+
+    return 0
+}
+
+
+## Defaults
+_executing_user="${SUDO_USER:-${USER}}"
+_executing_group="${GROUPS[0]}"
+[[ "${_executing_user}" != 'root' ]] && {
+    _executing_group="$(groups "${_executing_user}" | awk '{print $3}')"
+}
+
+_verbose='0'
+
+_templates_directory="${__DIR__}/templates"
+_template_name='default'
+_profile_name="${_template_name}"
+_mount_name="${_template_name}"
+_mount_scripts_directory="${HOME}/bin"
+
+_jail_name=''
+_distrobution_name='debian'
+_distrobution_url='ftp://ftp.debian.org/debian/'
+
+_base_chroot_directory='/chroot_live'
+_base_download_directory='/chroot_downloads'
+_firejail_profiles_directory="${HOME}/.config/firejail"
+
+_arch_name="$(dpkg --print-architecture)"
+_branch_name='stable'
+
+
+## Save passed arguments and acceptable arguments to Bash arrays
+# shellcheck disable=SC2034
+_passed_args=("${@:?"No arguments provided"}")
+_acceptable_args=(
+    '--help|-h:bool'
+    '--verbose|-v:bool'
+    '--version|-V:bool'
+    '--templates-directory:path'
+    '--template-name|--template:print'
+    '--profile-name|--profile:print'
+    '--mount-name|--mount:print'
+    '--distribution-name|--dist-name|--dist:print'
+    '--distribution-url|--dist-url|--url:print'
+    '--base-chroot-directory:path'
+    '--base-download-directory:path'
+    '--firejail-profiles-directory|--profiles-directory:path'
+    '--arch-name|--arch:print'
+    '--branch-name|--branch:print'
+    '--jail-name|--jail:print-nil'
+)
+argument_parser '_passed_args' '_acceptable_args'
+_exit_status="$?"
+
+
+_source_profile_path="${_templates_directory}/firejail-profiles/${_profile_name:?${_template_name}}.profile"
+_destination_profile_path="${_firejail_profiles_directory}/chroots/${_arch_name}/${_distrobution_name}/${_jail_name}.profile"
+
+_source_mount_script_path="${_templates_directory}/mount-scripts/${_mount_name:?${_template_name}}.sh"
+_destination_mount_script_path="${_mount_scripts_directory}/jailed_${_mount_name}.sh"
+
+_download_path="${_base_download_directory}/${_arch_name}/${_distrobution_name}"
+_live_path="${_base_download_directory}/${_arch_name}/${_distrobution_name}/${_jail_name}"
+
+
+## Print documentation for the script and exit, or allow further execution
+# shellcheck disable=SC2154
+(( _help )) || (( _exit_status )) && {
+    __usage__
+    exit "${_exit_status:-0}"
+}
+
+# shellcheck disable=SC2154
+(( _license )) && {
+    printf '%s\n' "${__DESCRIPTION__}"
+    __license__
+    exit ${_exit_status:-0}
+}
+
+# shellcheck disable=SC2154
+(( _version )) && {
+    __version__
+    exit ${_exit_status:-0}
+}
+
+
+## Detect premature failure states
+! (( EUID )) || {
+    __usage__ 'sudo or root level permissions are required'
+    exit 1
+}
+
+(( "${#_jail_name}" )) || {
+    __usage__ 'No jail name defined'
+    exit 1
+}
+
+[[ -f "${_source_profile_path}" ]] || {
+    __usage__ "No profile found at: ${_source_profile_path}"
+    exit 1
+}
+
+[[ -f "${_source_mount_script_path}" ]] || {
+    __usage__ "No mount script found at: ${_source_mount_script_path}"
+    exit 1
+}
+
+
+[[ -d "${_live_path}" ]] && {
+    printf >&2 'Live chroot path already exists -> %s\n' "${_live_path}"
+    exit 1
+}
+
+
+## Download chroot base file system only if not present
+[[ -d "${_download_path}" ]] || {
+    mkdir -p "${_download_path}"
+
+    _debootstrap_args=(
+        "--arch='${_arch_name}'"
+        "${_branch_name}"
+        "${_download_path}"
+        "${_distrobution_url}"
+    )
+
+    pushd "${_download_path}"
+
+    [[ "$(dpkg --print-architecture)" == "${_arch_name}" ]] || {
+        _debootstrap_args=( --foreign "${_debootstrap_args[@]}" )
+    }
+
+    debootstrap "${_debootstrap_args[@]}"
+
+    popd
+}
+
+
+## Copy base chroot filesystem to mount point
+_rsync_args=("${_download_path}/" "${_live_path}")
+if (( _verbose )); then
+    rsync -azvh "${_rsync_args[@]}"
+else
+    printf 'Syncing from "%s" to "%s" may take a bit...\n' "${_download_path}" "${_live_path}"
+    rsync -azh "${_rsync_args[@]}"
+fi
+
+
+## Copy and customize Firejail profile
+cp "${_source_profile_path}" "${_destination_profile_path}"
+sed -i "s/<<firejail_name>>/${_jail_name}/" "${_destination_profile_path}"
+sed -i "s/<<firejail_arch>>/${_arch_name}/" "${_destination_profile_path}"
+
+
+## Copy and customize mount script
+cp "${_source_mount_script_path}" "${_destination_mount_script_path}"
+sed -i "s/<<firejail_profile>>/${_destination_profile_path}/" "${_destination_mount_script_path}"
+sed -i "s/<<firejail_chroot>>/${_live_path}/" "${_destination_mount_script_path}"
+
+
+## Update ownership and permissions
+chown "${_executing_user}:${_executing_group}" "${_destination_profile_path}"
+chmod 640 "${_destination_mount_script_path}"
+
+chown "${_executing_user}:${_executing_group}" "${_destination_mount_script_path}"
+chmod 750 "${_destination_mount_script_path}"
+
+
+printf '%s finished\n' "${__NAME__}"
+
